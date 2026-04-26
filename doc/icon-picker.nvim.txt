@@ -1,0 +1,35 @@
+*icon-picker.nvim*  Telescope icon picker for React projects
+
+INTRODUCTION ~
+  icon-picker.nvim provides a Telescope picker for icons from:
+  - lucide-react
+  - react-icons
+
+FEATURES ~
+  - Inserts JSX icon at cursor
+  - Adds import safely
+  - Handles multiline import blocks
+  - Optional terminal preview
+
+SETUP ~
+>
+  require("icon_picker").setup({
+    command = "IconPicker",
+    keymaps = {
+      normal = "<leader>ii",
+      insert = "<C-g>i",
+    },
+  })
+<
+
+COMMANDS ~
+  :IconPicker
+      Open picker.
+
+MAPPINGS ~
+  Configure through setup(). No default keymaps unless provided.
+
+IN-PICKER ~
+  <C-t>  Toggle source mode when both sources are available.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
