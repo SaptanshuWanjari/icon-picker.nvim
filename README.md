@@ -8,6 +8,10 @@ Lightweight Telescope picker for React icons.
 - Handles multiline imports safely
 - Optional terminal preview with `chafa`
 
+## Demo
+
+![Demo](./assets/Icon-Picker.gif)
+
 ## Requirements
 
 - Neovim >= 0.9
