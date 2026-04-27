@@ -10,7 +10,13 @@ Lightweight Telescope picker for React icons.
 
 ## Demo
 
-![Demo](./assets/Icon-Picker.gif)
+### Normal mode
+
+![Demo](./assets/normal.gif)
+
+### Insert Mode
+
+![Demo](./assets/insert.gif)
 
 ## Requirements
 
