@@ -2,7 +2,7 @@
 
 Lightweight Telescope picker for React icons.
 
-- Sources: `lucide-react`, `react-icons/*`
+- Sources: `lucide-react`, `react-icons/*`, `@iconify-json/*`
 - Inserts JSX icon at cursor
 - Adds safe import at top (`"use client"` aware)
 - Handles multiline imports safely
@@ -23,6 +23,10 @@ Lightweight Telescope picker for React icons.
 - Neovim >= 0.9
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 - Node project with `node_modules`
+- Icon source packages:
+  - `lucide-react`
+  - `react-icons`
+  - `@iconify/react` plus one or more `@iconify-json/{prefix}` packages
 
 Preview:
 
@@ -62,7 +66,9 @@ Preview:
 
 - `:IconPicker`
 - Select icon -> plugin inserts import + `<IconName />`
-- In picker: `<C-t>` toggles source when both installed (`all/lucide/react`)
+- Iconify selections insert `<Icon icon="prefix:name" />` from `@iconify/react`
+- When multiple sources are installed, `:IconPicker` first opens a source selector (`all/lucide/react/iconify`)
+- In the icon picker, `<C-t>` reopens the source selector and reloads the picker with that source only
 
 ## Configuration
 
@@ -91,6 +97,7 @@ require("icon_picker").setup({
 - Import logic avoids destructive rewrite of complex imports.
 - If source missing, picker filters automatically.
 - Lucide preview has fallback path even when React render path fails.
+- Iconify support is offline-only and reads installed `@iconify-json/{prefix}/icons.json` files.
 
 ## License
 

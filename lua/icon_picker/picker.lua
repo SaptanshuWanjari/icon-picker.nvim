@@ -4,6 +4,7 @@ local M = {}
 local unpack_fn = table.unpack or unpack
 
 local cache = {}
+local source_cache = {}
 local config = {
   stopinsert_on_open = true,
   toggle_source_key = "<C-t>",
@@ -82,6 +83,63 @@ const renderLucideWithoutReact = () => {
   return renderFromIconNode(iconNode);
 };
 
+const mergeIconifyData = (parent, child) => ({
+  ...parent,
+  ...child,
+  hFlip: Boolean(parent.hFlip) !== Boolean(child.hFlip),
+  vFlip: Boolean(parent.vFlip) !== Boolean(child.vFlip),
+  rotate: ((parent.rotate || 0) + (child.rotate || 0)) % 4,
+});
+
+const resolveIconifyIcon = (set, name, depth = 0) => {
+  if (depth > 8) return null;
+  const icon = set.icons && set.icons[name];
+  if (icon) return mergeIconifyData(set, icon);
+
+  const alias = set.aliases && set.aliases[name];
+  if (!alias || !alias.parent) return null;
+
+  const parent = resolveIconifyIcon(set, alias.parent, depth + 1);
+  return parent ? mergeIconifyData(parent, alias) : null;
+};
+
+const iconifyTransform = (data) => {
+  const left = data.left || 0;
+  const top = data.top || 0;
+  const width = data.width || 16;
+  const height = data.height || 16;
+  const transforms = [];
+
+  if (data.hFlip) transforms.push(`translate(${left + width} ${top}) scale(-1 1) translate(${-left} ${-top})`);
+  if (data.vFlip) transforms.push(`translate(${left} ${top + height}) scale(1 -1) translate(${-left} ${-top})`);
+  if (data.rotate) transforms.push(`rotate(${data.rotate * 90} ${left + width / 2} ${top + height / 2})`);
+
+  return transforms.join(" ");
+};
+
+const renderIconifyFromJson = () => {
+  if (modPath !== "@iconify/react") return "";
+
+  const [prefix, name] = String(iconName).split(/:(.+)/);
+  if (!prefix || !name) return "";
+
+  const iconSetPath = path.join(root, "node_modules", "@iconify-json", prefix, "icons.json");
+  if (!fs.existsSync(iconSetPath)) return "";
+
+  const set = JSON.parse(fs.readFileSync(iconSetPath, "utf8"));
+  const data = resolveIconifyIcon(set, name);
+  if (!data || !data.body) return "";
+
+  const left = data.left || 0;
+  const top = data.top || 0;
+  const width = data.width || 16;
+  const height = data.height || 16;
+  const transform = iconifyTransform(data);
+  const body = transform ? `<g transform="${esc(transform)}">${data.body}</g>` : data.body;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="${left} ${top} ${width} ${height}" color="#ffffff">${body}</svg>`;
+};
+
 try {
   process.chdir(root);
   let svg = "";
@@ -89,7 +147,7 @@ try {
   try {
     svg = renderWithReact();
   } catch (_) {
-    svg = renderLucideWithoutReact();
+    svg = renderIconifyFromJson() || renderLucideWithoutReact();
   }
 
   if (!svg) {
@@ -122,6 +180,17 @@ local function read_file(path)
   local content = fd:read "*a"
   fd:close()
   return content
+end
+
+local function decode_json(content)
+  if vim.json and vim.json.decode then
+    local ok, decoded = pcall(vim.json.decode, content)
+    if ok then return decoded end
+  end
+
+  local ok, decoded = pcall(vim.fn.json_decode, content)
+  if ok then return decoded end
+  return nil
 end
 
 local function dedupe(entries)
@@ -252,13 +321,68 @@ local function parse_react_icons(root)
   return entries
 end
 
+local function parse_iconify(root)
+  local entries = {}
+  local iconify_root = join(root, "node_modules", "@iconify-json")
+
+  if not file_exists(join(root, "node_modules", "@iconify", "react", "package.json")) then return entries end
+  if not dir_exists(iconify_root) then return entries end
+
+  local req = uv.fs_scandir(iconify_root)
+  if not req then return entries end
+
+  while true do
+    local dir_name, t = uv.fs_scandir_next(req)
+    if not dir_name then break end
+
+    if t == "directory" then
+      local icons_path = join(iconify_root, dir_name, "icons.json")
+      if file_exists(icons_path) then
+        local icon_set = decode_json(read_file(icons_path) or "")
+        local prefix = icon_set and icon_set.prefix or dir_name
+
+        local function add_icon(icon)
+          if not icon or icon == "" then return end
+          local icon_name = prefix .. ":" .. icon
+          table.insert(entries, {
+            icon = icon_name,
+            source = "iconify/" .. prefix,
+            import_path = "@iconify/react",
+            import_name = "Icon",
+            insert_text = '<Icon icon="' .. icon_name .. '" />',
+          })
+        end
+
+        if type(icon_set) == "table" then
+          if type(icon_set.icons) == "table" then
+            for icon in pairs(icon_set.icons) do
+              add_icon(icon)
+            end
+          end
+          if type(icon_set.aliases) == "table" then
+            for icon in pairs(icon_set.aliases) do
+              add_icon(icon)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return entries
+end
+
 local function build_entries(root)
   if cache[root] then return cache[root] end
 
   local entries = {}
+  local lucide_entries = parse_lucide(root)
+  local react_entries = parse_react_icons(root)
+  local iconify_entries = parse_iconify(root)
 
-  vim.list_extend(entries, parse_lucide(root))
-  vim.list_extend(entries, parse_react_icons(root))
+  vim.list_extend(entries, lucide_entries)
+  vim.list_extend(entries, react_entries)
+  vim.list_extend(entries, iconify_entries)
 
   entries = dedupe(entries)
   table.sort(entries, function(a, b)
@@ -267,6 +391,11 @@ local function build_entries(root)
   end)
 
   cache[root] = entries
+  source_cache[root] = {
+    lucide = #lucide_entries > 0,
+    react = #react_entries > 0,
+    iconify = #iconify_entries > 0,
+  }
   return entries
 end
 
@@ -280,14 +409,18 @@ end
 
 local function build_preview_command(root, item)
   local shellescape = vim.fn.shellescape
+  local import_name = item.import_name or item.icon
   local details = {
     "Source: " .. item.source,
-    string.format('Import: import { %s } from "%s";', item.icon, item.import_path),
+    string.format('Import: import { %s } from "%s";', import_name, item.import_path),
     "Insert: " .. item.insert_text,
   }
 
   if item.source == "lucide" then
     table.insert(details, "URL: https://lucide.dev/icons/" .. pascal_to_kebab(item.icon))
+  elseif item.source:match "^iconify/" then
+    local prefix, name = item.icon:match "^([^:]+):(.+)$"
+    if prefix and name then table.insert(details, "URL: https://icon-sets.iconify.design/" .. prefix .. "/" .. name .. "/") end
   end
 
   local detail_text = table.concat(details, "\\n"):gsub("%%", "%%%%")
@@ -317,42 +450,71 @@ local function make_previewer(root, previewers)
   }
 end
 
+local function entry_value(entry)
+  return entry and (entry.value or entry)
+end
+
 local function filter_entries(entries, mode)
   if mode == "all" then return entries end
 
   local out = {}
   for _, entry in ipairs(entries) do
-    if mode == "lucide" and entry.source == "lucide" then table.insert(out, entry) end
-    if mode == "react" and entry.source:match "^react%-icons/" then table.insert(out, entry) end
+    local item = entry_value(entry)
+    local source = item and item.source or ""
+    if mode == "lucide" and source == "lucide" then table.insert(out, item) end
+    if mode == "react" and source:match "^react%-icons/" then table.insert(out, item) end
+    if mode == "iconify" and source:match "^iconify/" then table.insert(out, item) end
   end
   return out
 end
 
-local function detect_sources(entries)
-  local has_lucide = false
-  local has_react = false
+local function available_from_entries(entries)
+  local available = {
+    lucide = false,
+    react = false,
+    iconify = false,
+  }
 
   for _, entry in ipairs(entries) do
-    if entry.source == "lucide" then has_lucide = true end
-    if entry.source:match "^react%-icons/" then has_react = true end
+    local item = entry_value(entry)
+    local source = item and item.source or ""
+
+    if source == "lucide" then available.lucide = true end
+    if source:match "^react%-icons/" then available.react = true end
+    if source:match "^iconify/" then available.iconify = true end
   end
 
-  return {
-    lucide = has_lucide,
-    react = has_react,
-  }
+  return available
 end
 
-local function build_modes(sources)
-  if sources.lucide and sources.react then return { "all", "lucide", "react" } end
-  if sources.lucide then return { "lucide" } end
-  if sources.react then return { "react" } end
+local function build_modes_from_available(available)
+  local modes = {}
+
+  if available.lucide then table.insert(modes, "lucide") end
+  if available.react then table.insert(modes, "react") end
+  if available.iconify then table.insert(modes, "iconify") end
+
+  if #modes > 1 then table.insert(modes, 1, "all") end
+  if #modes == 1 then return modes end
   return { "all" }
 end
 
+local function source_display(mode)
+  if mode == "all" then return "All sources" end
+  if mode == "lucide" then return "Lucide" end
+  if mode == "react" then return "React Icons" end
+  if mode == "iconify" then return "Iconify" end
+  return mode
+end
+
 local function make_finder(finders, entries)
+  local results = {}
+  for _, entry in ipairs(entries) do
+    table.insert(results, entry_value(entry))
+  end
+
   return finders.new_table {
-    results = entries,
+    results = results,
     entry_maker = function(entry)
       return {
         value = entry,
@@ -531,74 +693,116 @@ function M.open(opts)
   local bufnr = vim.api.nvim_get_current_buf()
   local root = find_project_root(bufnr)
   local entries = build_entries(root)
-  local sources = detect_sources(entries)
-
   if #entries == 0 then
-    vim.notify("No Lucide/React Icons found. Make sure node_modules is installed.", vim.log.levels.WARN)
+    vim.notify("No Lucide/React/Iconify icons found. Make sure node_modules is installed.", vim.log.levels.WARN)
     return
   end
 
-  local modes = build_modes(sources)
-  local mode_index = 1
-  local source_mode = modes[mode_index]
-  local initial_entries = filter_entries(entries, source_mode)
+  local modes = { "all", "lucide", "react", "iconify" }
 
-  local prompt_sources = source_mode
-  if #modes > 1 then prompt_sources = "lucide/react-icons" end
+  local open_icon_picker
+  local open_source_picker
 
-  local picker_opts = vim.tbl_extend("force", {
-    prompt_title = " Icons (" .. prompt_sources .. ")",
-    prompt_prefix = "   ",
-    selection_caret = "  ",
-    sorting_strategy = "ascending",
-    layout_strategy = "horizontal",
-    border = true,
-    layout_config = {
-      prompt_position = "top",
-      width = 0.95,
-      height = 0.85,
-      preview_width = 0.55,
-    },
-    previewer = make_previewer(root, previewers),
-  }, config.telescope or {}, opts)
+  open_icon_picker = function(source_mode)
+    local filtered_entries = filter_entries(entries, source_mode)
+    if #filtered_entries == 0 then
+      vim.notify("No icons found for source: " .. source_display(source_mode), vim.log.levels.WARN, { title = "IconPicker" })
+      return
+    end
 
-  pickers
-    .new(picker_opts, {
-      finder = make_finder(finders, initial_entries),
-      sorter = conf.generic_sorter(picker_opts),
-      attach_mappings = function(prompt_bufnr, map)
-        local function refresh_filtered()
-          local picker = action_state.get_current_picker(prompt_bufnr)
-          local filtered = filter_entries(entries, source_mode)
-          picker:refresh(make_finder(finders, filtered), { reset_prompt = false })
-          if config.notify_source_toggle then
-            vim.schedule(
-              function() vim.notify("Icon source: " .. source_mode, vim.log.levels.INFO, { title = "IconPicker" }) end
-            )
+    local picker_opts = vim.tbl_extend("force", {
+      prompt_title = " Icons (" .. source_display(source_mode) .. ")",
+      prompt_prefix = "   ",
+      selection_caret = "  ",
+      sorting_strategy = "ascending",
+      layout_strategy = "horizontal",
+      border = true,
+      layout_config = {
+        prompt_position = "top",
+        width = 0.95,
+        height = 0.85,
+        preview_width = 0.55,
+      },
+      previewer = make_previewer(root, previewers),
+    }, config.telescope or {}, opts)
+
+    pickers
+      .new(picker_opts, {
+        finder = make_finder(finders, filtered_entries),
+        sorter = conf.generic_sorter(picker_opts),
+        attach_mappings = function(prompt_bufnr, map)
+          local function reopen_source_picker()
+            actions.close(prompt_bufnr)
+            vim.schedule(function() open_source_picker(source_mode) end)
           end
-        end
 
-        map("i", config.toggle_source_key, function()
-          if #modes <= 1 then return end
-          mode_index = mode_index % #modes + 1
-          source_mode = modes[mode_index]
-          refresh_filtered()
-        end)
+          map("i", config.toggle_source_key, reopen_source_picker)
+          map("n", config.toggle_source_key, reopen_source_picker)
 
-        actions.select_default:replace(function()
-          actions.close(prompt_bufnr)
-          local selected = action_state.get_selected_entry()
-          if not selected then return end
+          actions.select_default:replace(function()
+            actions.close(prompt_bufnr)
+            local selected = action_state.get_selected_entry()
+            if not selected then return end
 
-          local item = selected.value
-          ensure_import(bufnr, item.import_path, item.icon)
-          insert_at_cursor(item.insert_text)
-        end)
+            local item = selected.value
+            ensure_import(bufnr, item.import_path, item.import_name or item.icon)
+            insert_at_cursor(item.insert_text)
+          end)
 
-        return true
-      end,
-    })
-    :find()
+          return true
+        end,
+      })
+      :find()
+  end
+
+  open_source_picker = function(default_mode)
+    if #modes <= 1 then
+      open_icon_picker(modes[1])
+      return
+    end
+
+    local source_opts = {
+      prompt_title = " Icon Source",
+      prompt_prefix = "   ",
+      selection_caret = "  ",
+      sorting_strategy = "ascending",
+      layout_strategy = "center",
+      border = true,
+      previewer = false,
+      layout_config = {
+        width = 0.35,
+        height = 0.35,
+      },
+    }
+
+    pickers
+      .new(source_opts, {
+        finder = finders.new_table {
+          results = modes,
+          entry_maker = function(mode)
+            return {
+              value = mode,
+              display = (mode == default_mode and "* " or "  ") .. source_display(mode),
+              ordinal = source_display(mode),
+            }
+          end,
+        },
+        sorter = conf.generic_sorter(source_opts),
+        attach_mappings = function(prompt_bufnr)
+          actions.select_default:replace(function()
+            local selected = action_state.get_selected_entry()
+            actions.close(prompt_bufnr)
+            if not selected then return end
+            vim.schedule(function() open_icon_picker(selected.value) end)
+          end)
+
+          return true
+        end,
+      })
+      :find()
+  end
+
+  open_source_picker(modes[1])
 end
 
 return M
