@@ -733,7 +733,7 @@ function M.open(opts)
         attach_mappings = function(prompt_bufnr, map)
           local function reopen_source_picker()
             actions.close(prompt_bufnr)
-            vim.schedule(function() open_source_picker(source_mode) end)
+            vim.defer_fn(function() open_source_picker(source_mode) end, 20)
           end
 
           map("i", config.toggle_source_key, reopen_source_picker)
@@ -793,7 +793,7 @@ function M.open(opts)
             local selected = action_state.get_selected_entry()
             actions.close(prompt_bufnr)
             if not selected then return end
-            vim.schedule(function() open_icon_picker(selected.value) end)
+            vim.defer_fn(function() open_icon_picker(selected.value) end, 20)
           end)
 
           return true
@@ -802,7 +802,7 @@ function M.open(opts)
       :find()
   end
 
-  open_source_picker(modes[1])
+  vim.defer_fn(function() open_source_picker(modes[1]) end, 20)
 end
 
 return M
