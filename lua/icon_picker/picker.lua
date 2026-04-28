@@ -6,11 +6,15 @@ local unpack_fn = table.unpack or unpack
 local cache = {}
 local source_cache = {}
 local config = {
+  ui = "telescope",
+  preview_cache_max_age = 60 * 60 * 24 * 7,
   stopinsert_on_open = true,
   toggle_source_key = "<C-t>",
   notify_source_toggle = true,
+  snacks = {},
   telescope = {},
 }
+local cleaned_preview_cache = false
 local NODE_RENDER_SCRIPT = [[
 const fs = require("fs");
 const path = require("path");
@@ -163,6 +167,10 @@ try {
 ]]
 
 local function join(...) return table.concat({ ... }, "/") end
+
+local function preview_cache_dir()
+  return join(vim.fn.stdpath "cache", "icon-picker.nvim")
+end
 
 local function file_exists(path)
   local stat = uv.fs_stat(path)
@@ -443,6 +451,103 @@ printf "\n%s\n";]],
   return { "bash", "-lc", command }
 end
 
+local function build_svg_command(root, item)
+  return {
+    "node",
+    "-e",
+    NODE_RENDER_SCRIPT,
+    root,
+    item.import_path,
+    item.icon,
+  }
+end
+
+local function preview_cache_file(item)
+  local dir = preview_cache_dir()
+  vim.fn.mkdir(dir, "p")
+  local name = (item.source .. "-" .. item.icon):gsub("[^%w_.-]", "_")
+  return join(dir, name .. ".svg")
+end
+
+local function cleanup_preview_cache()
+  if cleaned_preview_cache then return end
+  cleaned_preview_cache = true
+
+  local max_age = tonumber(config.preview_cache_max_age)
+  if not max_age or max_age <= 0 then return end
+
+  local dir = preview_cache_dir()
+  if not dir_exists(dir) then return end
+
+  local cutoff = os.time() - max_age
+  local req = uv.fs_scandir(dir)
+  if not req then return end
+
+  while true do
+    local name, t = uv.fs_scandir_next(req)
+    if not name then break end
+    if t == "file" and (name:match "%.svg$" or name:match "%.png$") then
+      local file = join(dir, name)
+      local stat = uv.fs_stat(file)
+      local mtime = stat and stat.mtime and stat.mtime.sec
+      if mtime and mtime < cutoff then pcall(uv.fs_unlink, file) end
+    end
+  end
+end
+
+local function preview_image_file(svg_file)
+  local png_file = svg_file:gsub("%.svg$", ".png")
+  if file_exists(png_file) then return png_file end
+
+  local commands = {
+    { "magick", "-background", "none", svg_file, png_file },
+    { "convert", "-background", "none", svg_file, png_file },
+  }
+
+  for _, command in ipairs(commands) do
+    if vim.fn.executable(command[1]) == 1 then
+      vim.fn.system(command)
+      if vim.v.shell_error == 0 and file_exists(png_file) then return png_file end
+    end
+  end
+
+  return svg_file
+end
+
+local function make_snacks_preview_lines(item)
+  local import_name = item.import_name or item.icon
+  return {
+    "Source: " .. item.source,
+    string.format('Import: import { %s } from "%s";', import_name, item.import_path),
+    "Insert: " .. item.insert_text,
+  }
+end
+
+local function show_snacks_image_preview(ctx, preview, item, svg_file)
+  local snacks = rawget(_G, "Snacks")
+  if snacks and snacks.image and snacks.image.supports_terminal and snacks.image.supports_terminal() then
+    local image_file = preview_image_file(svg_file)
+    if not snacks.image.supports_file or snacks.image.supports_file(image_file) then
+      local buf = preview:scratch()
+      preview:set_title(item.icon .. " [" .. item.source .. "]")
+      snacks.image.buf.attach(buf, {
+        src = image_file,
+        max_width = 42,
+        max_height = 16,
+      })
+      return
+    end
+  end
+
+  local lines = make_snacks_preview_lines(item)
+  vim.list_extend(lines, {
+    "",
+    "Image preview requires snacks.image with a supported terminal and ImageMagick.",
+    "SVG: " .. svg_file,
+  })
+  preview:set_lines(lines)
+end
+
 local function make_previewer(root, previewers)
   return previewers.new_termopen_previewer {
     title = " Icon Preview",
@@ -452,6 +557,115 @@ end
 
 local function entry_value(entry)
   return entry and (entry.value or entry)
+end
+
+local function build_snacks_items(entries)
+  local items = {}
+  for _, entry in ipairs(entries) do
+    local item = entry_value(entry)
+    table.insert(items, vim.tbl_extend("force", item, {
+      text = item.source .. " " .. item.icon,
+      item = item,
+    }))
+  end
+  return items
+end
+
+local function stop_process(process)
+  if type(process) == "number" then
+    pcall(vim.fn.jobstop, process)
+  elseif process and process.kill then
+    pcall(function() process:kill(9) end)
+  end
+end
+
+local function strip_ansi(text)
+  return text
+    :gsub("\27%][^\7]*\7", "")
+    :gsub("\27%[[%d;?]*[ -/]*[@-~]", "")
+    :gsub("\27%([%w]", "")
+end
+
+local function run_preview_command(command, on_stdout)
+  if vim.system then
+    return vim.system(command, { text = true }, function(out)
+      if out.signal == 9 then return end
+      on_stdout(out.stdout or "")
+    end)
+  end
+
+  local stdout = {}
+  local job_id
+  job_id = vim.fn.jobstart(command, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      stdout = data or {}
+    end,
+    on_exit = function(_, code)
+      if code == 143 then return end
+      on_stdout(table.concat(stdout, "\n"))
+    end,
+  })
+
+  return job_id > 0 and job_id or nil
+end
+
+local function make_snacks_preview(root)
+  return function(ctx)
+    local preview = ctx.preview
+    local item = ctx.item and (ctx.item.item or ctx.item)
+    if not (preview and item) then return end
+
+    local state = preview.state
+    local item_key = item.import_path .. "::" .. item.icon
+    local svg_file = preview_cache_file(item)
+
+    if state.item_key == item_key then
+      if state.process then return end
+      if file_exists(svg_file) then
+        show_snacks_image_preview(ctx, preview, item, svg_file)
+        return
+      end
+    end
+
+    local command = build_svg_command(root, item)
+
+    state.preview_seq = (state.preview_seq or 0) + 1
+    local preview_seq = state.preview_seq
+    state.item_key = item_key
+
+    stop_process(state.process)
+    state.process = nil
+
+    preview:set_lines { "Loading preview..." }
+    state.process = run_preview_command(command, function(stdout)
+      vim.schedule(function()
+        pcall(function()
+          if state.preview_seq ~= preview_seq then return end
+          state.process = nil
+
+          stdout = strip_ansi(stdout or ""):gsub("\r", "")
+          local lines = make_snacks_preview_lines(item)
+
+          if stdout == "" then
+            vim.list_extend(lines, { "", "Preview unavailable." })
+            preview:set_lines(lines)
+            return
+          end
+
+          local svg_file = preview_cache_file(item)
+          local fd = io.open(svg_file, "w")
+          if fd then
+            fd:write(stdout)
+            fd:close()
+          end
+
+          show_snacks_image_preview(ctx, preview, item, svg_file)
+        end)
+      end)
+    end)
+  end
 end
 
 local function filter_entries(entries, mode)
@@ -523,6 +737,16 @@ local function make_finder(finders, entries)
       }
     end,
   }
+end
+
+local function make_snacks_format()
+  return function(item)
+    item = entry_value(item)
+    return {
+      { string.format("%-18s", "[" .. item.source .. "]"), "Comment" },
+      { " " .. item.icon },
+    }
+  end
 end
 
 local function is_use_client(line)
@@ -664,18 +888,10 @@ end
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
+  vim.defer_fn(cleanup_preview_cache, 1000)
 end
 
-function M.open(opts)
-  opts = opts or {}
-
-  -- Keep picker UI consistent when triggered from insert mode mappings.
-  local mode = vim.api.nvim_get_mode().mode
-  if config.stopinsert_on_open and (mode:sub(1, 1) == "i" or mode:sub(1, 1) == "R") then vim.cmd "stopinsert" end
-
-  local ok_lazy, lazy = pcall(require, "lazy")
-  if ok_lazy then lazy.load { plugins = { "telescope.nvim" } } end
-
+local function open_telescope(opts, bufnr, root, entries, modes)
   local ok_pickers, pickers = pcall(require, "telescope.pickers")
   local ok_finders, finders = pcall(require, "telescope.finders")
   local ok_actions, actions = pcall(require, "telescope.actions")
@@ -689,17 +905,6 @@ function M.open(opts)
   end
 
   local conf = conf_mod.values
-
-  local bufnr = vim.api.nvim_get_current_buf()
-  local root = find_project_root(bufnr)
-  local entries = build_entries(root)
-  if #entries == 0 then
-    vim.notify("No Lucide/React/Iconify icons found. Make sure node_modules is installed.", vim.log.levels.WARN)
-    return
-  end
-
-  local modes = { "all", "lucide", "react", "iconify" }
-
   local open_icon_picker
   local open_source_picker
 
@@ -803,6 +1008,153 @@ function M.open(opts)
   end
 
   vim.defer_fn(function() open_source_picker(modes[1]) end, 20)
+end
+
+local function open_snacks(opts, bufnr, root, entries, modes)
+  local snacks = rawget(_G, "Snacks")
+  if not (snacks and snacks.picker and snacks.picker.pick) then
+    local ok_snacks, snacks_mod = pcall(require, "snacks")
+    if ok_snacks then snacks = snacks_mod end
+  end
+
+  if not (snacks and snacks.picker and snacks.picker.pick) then
+    vim.notify("snacks.nvim picker is not available.", vim.log.levels.ERROR)
+    return
+  end
+
+  local open_icon_picker
+  local open_source_picker
+
+  open_icon_picker = function(source_mode)
+    local filtered_entries = filter_entries(entries, source_mode)
+    if #filtered_entries == 0 then
+      vim.notify("No icons found for source: " .. source_display(source_mode), vim.log.levels.WARN, { title = "IconPicker" })
+      return
+    end
+
+    local picker_opts = vim.tbl_deep_extend("force", {
+      source = "icon_picker",
+      title = "Icons (" .. source_display(source_mode) .. ")",
+      prompt = " ",
+      pattern = opts.default_text or opts.pattern,
+      items = build_snacks_items(filtered_entries),
+      format = make_snacks_format(),
+      preview = make_snacks_preview(root),
+      confirm = function(picker, item)
+        if picker then picker:close() end
+        item = item and (item.item or item)
+        if not item then return end
+        ensure_import(bufnr, item.import_path, item.import_name or item.icon)
+        insert_at_cursor(item.insert_text)
+      end,
+      win = {
+        input = {
+          keys = {
+            [config.toggle_source_key] = {
+              function(picker)
+                picker:close()
+                vim.defer_fn(function() open_source_picker(source_mode) end, 20)
+              end,
+              mode = { "i", "n" },
+              desc = "Select source",
+            },
+          },
+        },
+        list = {
+          keys = {
+            [config.toggle_source_key] = {
+              function(picker)
+                picker:close()
+                vim.defer_fn(function() open_source_picker(source_mode) end, 20)
+              end,
+              desc = "Select source",
+            },
+          },
+        },
+        preview = {
+          wo = {
+            number = false,
+            relativenumber = false,
+            signcolumn = "no",
+            wrap = true,
+            linebreak = true,
+          },
+        },
+      },
+      layout = {
+        preset = "default",
+      },
+    }, config.snacks or {}, opts)
+
+    snacks.picker.pick(picker_opts)
+  end
+
+  open_source_picker = function(default_mode)
+    if #modes <= 1 then
+      open_icon_picker(modes[1])
+      return
+    end
+
+    snacks.picker.pick(vim.tbl_deep_extend("force", {
+      source = "icon_picker_sources",
+      title = "Icon Source",
+      prompt = " ",
+      items = vim.tbl_map(function(mode)
+        return {
+          mode = mode,
+          text = source_display(mode),
+        }
+      end, modes),
+      format = function(item)
+        return {
+          { item.mode == default_mode and "* " or "  ", "Comment" },
+          { item.text },
+        }
+      end,
+      confirm = function(picker, item)
+        if picker then picker:close() end
+        if not item then return end
+        vim.defer_fn(function() open_icon_picker(item.mode) end, 20)
+      end,
+      layout = {
+        preset = "select",
+        preview = false,
+      },
+    }, {}))
+  end
+
+  vim.defer_fn(function() open_source_picker(modes[1]) end, 20)
+end
+
+function M.open(opts)
+  opts = opts or {}
+
+  -- Keep picker UI consistent when triggered from insert mode mappings.
+  local mode = vim.api.nvim_get_mode().mode
+  if config.stopinsert_on_open and (mode:sub(1, 1) == "i" or mode:sub(1, 1) == "R") then vim.cmd "stopinsert" end
+
+  local ui = config.ui or "telescope"
+  local ok_lazy, lazy = pcall(require, "lazy")
+  if ok_lazy then
+    local plugin = ui == "snacks" and "snacks.nvim" or "telescope.nvim"
+    lazy.load { plugins = { plugin } }
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local root = find_project_root(bufnr)
+  local entries = build_entries(root)
+  if #entries == 0 then
+    vim.notify("No Lucide/React/Iconify icons found. Make sure node_modules is installed.", vim.log.levels.WARN)
+    return
+  end
+
+  local modes = { "all", "lucide", "react", "iconify" }
+
+  if ui == "snacks" then
+    open_snacks(opts, bufnr, root, entries, modes)
+  else
+    open_telescope(opts, bufnr, root, entries, modes)
+  end
 end
 
 return M

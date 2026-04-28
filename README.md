@@ -1,12 +1,12 @@
 # icon-picker.nvim
 
-Lightweight Telescope picker for React icons.
+Lightweight Neovim picker for React icons.
 
 - Sources: `lucide-react`, `react-icons/*`, `@iconify-json/*`
 - Inserts JSX icon at cursor
 - Adds safe import at top (`"use client"` aware)
 - Handles multiline imports safely
-- Optional terminal preview with `chafa`
+- Preview support for Telescope and snacks.nvim
 
 ## Demo
 
@@ -21,7 +21,9 @@ Lightweight Telescope picker for React icons.
 ## Requirements
 
 - Neovim >= 0.9
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+- One picker UI:
+  - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+  - [snacks.nvim](https://github.com/folke/snacks.nvim) with `picker.enabled = true`
 - Node project with `node_modules`
 - At least one icon source package:
   - `lucide-react`
@@ -31,10 +33,14 @@ Lightweight Telescope picker for React icons.
 Preview:
 
 - `node`
-- `chafa` (optional but recommended)
-- `react` + `react-dom` for `react-icons` render preview path
+- `react` + `react-dom` for the `react-icons` preview render path
+- Telescope preview: `chafa` (optional but recommended)
+- snacks.nvim image preview:
+  - snacks `image = { enabled = true }`
+  - supported terminal: Kitty, Ghostty, or WezTerm
+  - ImageMagick (`magick` or `convert`) for SVG -> PNG cache conversion
 
-## Installation (lazy.nvim)
+## Installation (lazy.nvim, Telescope)
 
 ```lua
 {
@@ -50,10 +56,48 @@ Preview:
       insert = "<C-g>i",
     },
     picker = {
+      ui = "telescope",
       toggle_source_key = "<C-t>",
       notify_source_toggle = false,
       stopinsert_on_open = true,
       telescope = {},
+    },
+  },
+  config = function(_, opts)
+    require("icon_picker").setup(opts)
+  end,
+}
+```
+
+## Installation (lazy.nvim, snacks.nvim)
+
+```lua
+{
+  "SaptanshuWanjari/icon-picker.nvim",
+  dependencies = {
+    {
+      "folke/snacks.nvim",
+      opts = {
+        picker = { enabled = true },
+        image = { enabled = true },
+      },
+    },
+  },
+  opts = {
+    command = "IconPicker",
+    keymaps = {
+      normal = "<leader>ii",
+      insert = "<C-g>i",
+    },
+    picker = {
+      ui = "snacks",
+      toggle_source_key = "<C-t>",
+      stopinsert_on_open = true,
+      preview_cache_max_age = 60 * 60 * 24 * 7, -- 7 days; set 0 to disable cleanup
+      snacks = {
+        -- any snacks.nvim picker opts override
+        -- layout = { preset = "default" },
+      },
     },
   },
   config = function(_, opts)
@@ -80,9 +124,15 @@ require("icon_picker").setup({
     insert = nil,          -- e.g. "<C-g>i"
   },
   picker = {
+    ui = "telescope", -- "telescope" or "snacks"
+    preview_cache_max_age = 60 * 60 * 24 * 7, -- 7 days; set 0 to disable cleanup
     stopinsert_on_open = true,
     toggle_source_key = "<C-t>",
     notify_source_toggle = false,
+    snacks = {
+      -- any snacks.nvim picker opts override
+      -- layout = { preset = "default" },
+    },
     telescope = {
       -- any Telescope picker opts override
       -- layout_strategy = "horizontal",
@@ -99,6 +149,8 @@ require("icon_picker").setup({
 - Lucide preview has fallback path even when React render path fails.
 - Iconify support is offline-only and reads installed `@iconify-json/{prefix}/icons.json` files.
 - Selecting an unavailable source shows a warning instead of opening an empty picker.
+- snacks.nvim previews cache rendered SVG/PNG files in `stdpath("cache")/icon-picker.nvim`.
+- The preview cache is cleaned once per Neovim session. Files older than `picker.preview_cache_max_age` are removed.
 
 ## License
 

@@ -9,9 +9,12 @@ local defaults = {
     insert = nil,
   },
   picker = {
+    ui = "telescope",
+    preview_cache_max_age = 60 * 60 * 24 * 7,
     stopinsert_on_open = true,
     toggle_source_key = "<C-t>",
     notify_source_toggle = false,
+    snacks = {},
     telescope = {},
   },
 }

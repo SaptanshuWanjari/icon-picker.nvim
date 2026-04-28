@@ -1,7 +1,7 @@
-*icon-picker.nvim*  Telescope icon picker for React projects
+*icon-picker.nvim*  Icon picker for React projects
 
 INTRODUCTION ~
-  icon-picker.nvim provides a Telescope picker for icons from:
+  icon-picker.nvim provides a Telescope or snacks.nvim picker for icons from:
   - lucide-react
   - react-icons
   - @iconify-json/* with @iconify/react
@@ -10,7 +10,7 @@ FEATURES ~
   - Inserts JSX icon at cursor
   - Adds import safely
   - Handles multiline import blocks
-  - Optional terminal preview
+  - Optional terminal/image preview
 
 SETUP ~
 >
@@ -19,6 +19,10 @@ SETUP ~
     keymaps = {
       normal = "<leader>ii",
       insert = "<C-g>i",
+    },
+    picker = {
+      ui = "telescope",  -- or "snacks"
+      preview_cache_max_age = 60 * 60 * 24 * 7,
     },
   })
 <
@@ -32,6 +36,23 @@ MAPPINGS ~
 
 IN-PICKER ~
   <C-t>  Reopen source selector when multiple sources are available.
+
+PREVIEW ~
+  Telescope previews use chafa in a terminal previewer.
+  snacks.nvim previews use snacks.image when available. Enable:
+>
+  require("snacks").setup({
+    picker = { enabled = true },
+    image = { enabled = true },
+  })
+<
+  snacks image previews also need a supported terminal and ImageMagick.
+  Rendered SVG/PNG preview files are cached in:
+>
+  stdpath("cache")/icon-picker.nvim
+<
+  Cache cleanup runs once per Neovim session. Set preview_cache_max_age = 0 to
+  disable cleanup.
 
 ICONIFY ~
   Iconify support reads installed @iconify-json/{prefix}/icons.json packages
