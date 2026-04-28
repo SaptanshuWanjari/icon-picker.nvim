@@ -23,10 +23,10 @@ Lightweight Telescope picker for React icons.
 - Neovim >= 0.9
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 - Node project with `node_modules`
-- Icon source packages:
+- At least one icon source package:
   - `lucide-react`
   - `react-icons`
-  - `@iconify/react` plus one or more `@iconify-json/{prefix}` packages
+  - `@iconify/react` plus one or more local icon sets, e.g. `@iconify-json/mdi`
 
 Preview:
 
@@ -65,10 +65,10 @@ Preview:
 ## Usage
 
 - `:IconPicker`
+- Choose a source first: `All sources`, `Lucide`, `React Icons`, or `Iconify`
 - Select icon -> plugin inserts import + `<IconName />`
 - Iconify selections insert `<Icon icon="prefix:name" />` from `@iconify/react`
-- When multiple sources are installed, `:IconPicker` first opens a source selector (`all/lucide/react/iconify`)
-- In the icon picker, `<C-t>` reopens the source selector and reloads the picker with that source only
+- In the icon picker, `<C-t>` reopens the source selector and reloads the picker with the selected source only
 
 ## Configuration
 
@@ -98,6 +98,7 @@ require("icon_picker").setup({
 - If source missing, picker filters automatically.
 - Lucide preview has fallback path even when React render path fails.
 - Iconify support is offline-only and reads installed `@iconify-json/{prefix}/icons.json` files.
+- Selecting an unavailable source shows a warning instead of opening an empty picker.
 
 ## License
 
