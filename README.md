@@ -18,6 +18,12 @@ Lightweight Neovim picker for React icons.
 
 ![Demo](./assets/Change-Source.gif)
 
+### Snacks
+
+![Snacks Menu](./assets/snacks_menu.png)
+
+![Snacks Preview](./assets/snacks_preview.png)
+
 ## Requirements
 
 - Neovim >= 0.9
