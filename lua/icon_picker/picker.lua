@@ -525,7 +525,14 @@ end
 
 local function show_snacks_image_preview(ctx, preview, item, svg_file)
   local snacks = rawget(_G, "Snacks")
-  if snacks and snacks.image and snacks.image.supports_terminal and snacks.image.supports_terminal() then
+  if
+    snacks
+    and snacks.image
+    and snacks.image.config
+    and snacks.image.config.enabled ~= false
+    and snacks.image.supports_terminal
+    and snacks.image.supports_terminal()
+  then
     local image_file = preview_image_file(svg_file)
     if not snacks.image.supports_file or snacks.image.supports_file(image_file) then
       local buf = preview:scratch()
@@ -542,7 +549,7 @@ local function show_snacks_image_preview(ctx, preview, item, svg_file)
   local lines = make_snacks_preview_lines(item)
   vim.list_extend(lines, {
     "",
-    "Image preview requires snacks.image with a supported terminal and ImageMagick.",
+    "Image preview requires snacks.image enabled, a supported terminal, and ImageMagick.",
     "SVG: " .. svg_file,
   })
   preview:set_lines(lines)
@@ -964,8 +971,24 @@ local function append_dependency_report(lines)
   table.insert(lines, "  snacks.image available: " .. bool_text(snacks and snacks.image and snacks.image.buf))
 
   if snacks and snacks.image then
+    table.insert(lines, "  snacks.image enabled: " .. bool_text(snacks.image.config and snacks.image.config.enabled ~= false))
     local ok_terminal, terminal_supported = pcall(snacks.image.supports_terminal)
     table.insert(lines, "  snacks image terminal supported: " .. bool_text(ok_terminal and terminal_supported))
+    local ok_terminal_mod, terminal = pcall(require, "snacks.image.terminal")
+    if ok_terminal_mod and terminal then
+      local ok_env, env = pcall(terminal.env)
+      if ok_env and env then
+        table.insert(lines, "  snacks image env: " .. tostring(env.name))
+        table.insert(lines, "  snacks image placeholders: " .. bool_text(env.placeholders))
+        table.insert(lines, "  snacks image remote: " .. bool_text(env.remote))
+      end
+    end
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, "Terminal Env")
+  for _, name in ipairs({ "TERM", "TERM_PROGRAM", "WEZTERM_EXECUTABLE", "TMUX", "SSH_CONNECTION", "SNACKS_WEZTERM" }) do
+    table.insert(lines, "  " .. name .. ": " .. tostring(vim.env[name] or ""))
   end
 end
 
@@ -1012,6 +1035,7 @@ local function append_render_report(lines, root, item)
   if snacks and snacks.image and snacks.image.supports_file then
     local ok_file, supported = pcall(snacks.image.supports_file, image_file)
     table.insert(lines, "  snacks supports image file: " .. bool_text(ok_file and supported))
+    table.insert(lines, "  snacks image enabled: " .. bool_text(snacks.image.config and snacks.image.config.enabled ~= false))
   end
 end
 
