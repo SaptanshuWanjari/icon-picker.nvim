@@ -57,6 +57,7 @@ Preview:
   },
   opts = {
     command = "IconPicker",
+    debug_command = "IconPickerDebug",
     keymaps = {
       normal = "<leader>ii",
       insert = "<C-g>i",
@@ -91,6 +92,7 @@ Preview:
   },
   opts = {
     command = "IconPicker",
+    debug_command = "IconPickerDebug",
     keymaps = {
       normal = "<leader>ii",
       insert = "<C-g>i",
@@ -115,6 +117,8 @@ Preview:
 ## Usage
 
 - `:IconPicker`
+- `:IconPickerDebug` opens a scratch debug report for preview issues
+- `:IconPickerDebug IconName` tests a specific icon, e.g. `:IconPickerDebug FcGoogle`
 - Choose a source first: `All sources`, `Lucide`, `React Icons`, or `Iconify`
 - Select icon -> plugin inserts import + `<IconName />`
 - Iconify selections insert `<Icon icon="prefix:name" />` from `@iconify/react`
@@ -125,6 +129,7 @@ Preview:
 ```lua
 require("icon_picker").setup({
   command = "IconPicker", -- set false/nil/"" to disable command
+  debug_command = "IconPickerDebug", -- set false/nil/"" to disable debug command
   keymaps = {
     normal = nil,          -- e.g. "<leader>ii"
     insert = nil,          -- e.g. "<C-g>i"
@@ -146,6 +151,35 @@ require("icon_picker").setup({
     },
   },
 })
+```
+
+## Debugging Preview Issues
+
+Run:
+
+```vim
+:IconPickerDebug
+```
+
+Or test a specific icon:
+
+```vim
+:IconPickerDebug FcGoogle
+```
+
+The report includes:
+
+- detected project root and source counts
+- `node`, `chafa`, `magick`, and `convert` availability
+- Telescope/snacks.nvim availability
+- snacks image terminal support
+- selected icon render status
+- SVG/PNG cache file paths and conversion result
+
+For snacks.nvim image preview problems, also run:
+
+```vim
+:checkhealth snacks
 ```
 
 ## Notes

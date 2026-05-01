@@ -621,22 +621,31 @@ local function make_snacks_preview(root)
     local item_key = item.import_path .. "::" .. item.icon
     local svg_file = preview_cache_file(item)
 
-    if state.item_key == item_key then
-      if state.process then return end
-      if file_exists(svg_file) then
-        show_snacks_image_preview(ctx, preview, item, svg_file)
-        return
-      end
-    end
-
-    local command = build_svg_command(root, item)
+    if state.item_key == item_key and state.process then return end
+    if state.item_key == item_key and state.shown_key == item_key and state.shown_buf == preview.win.buf then return end
 
     state.preview_seq = (state.preview_seq or 0) + 1
     local preview_seq = state.preview_seq
-    state.item_key = item_key
 
-    stop_process(state.process)
-    state.process = nil
+    if state.item_key ~= item_key then
+      stop_process(state.process)
+      state.process = nil
+      state.shown_key = nil
+      state.shown_buf = nil
+      preview:reset()
+    end
+
+    state.item_key = item_key
+    preview:set_title(item.icon .. " [" .. item.source .. "]")
+
+    if file_exists(svg_file) then
+      show_snacks_image_preview(ctx, preview, item, svg_file)
+      state.shown_key = item_key
+      state.shown_buf = preview.win.buf
+      return
+    end
+
+    local command = build_svg_command(root, item)
 
     preview:set_lines { "Loading preview..." }
     state.process = run_preview_command(command, function(stdout)
@@ -662,6 +671,8 @@ local function make_snacks_preview(root)
           end
 
           show_snacks_image_preview(ctx, preview, item, svg_file)
+          state.shown_key = item_key
+          state.shown_buf = preview.win.buf
         end)
       end)
     end)
@@ -884,6 +895,151 @@ local function insert_at_cursor(text)
 
   vim.api.nvim_set_current_line(before .. text .. after)
   vim.api.nvim_win_set_cursor(0, { row, col + #text })
+end
+
+local function bool_text(value)
+  return value and "yes" or "no"
+end
+
+local function executable_text(name)
+  return vim.fn.executable(name) == 1 and "yes" or "no"
+end
+
+local function find_debug_item(entries, icon)
+  if icon and icon ~= "" then
+    for _, entry in ipairs(entries) do
+      if entry.icon == icon or entry.icon:lower() == icon:lower() then return entry end
+    end
+  end
+
+  for _, entry in ipairs(entries) do
+    if entry.source == "lucide" then return entry end
+  end
+  return entries[1]
+end
+
+local function append_source_counts(lines, root, entries)
+  local counts = {
+    lucide = 0,
+    react = 0,
+    iconify = 0,
+  }
+
+  for _, entry in ipairs(entries) do
+    if entry.source == "lucide" then counts.lucide = counts.lucide + 1 end
+    if entry.source:match "^react%-icons/" then counts.react = counts.react + 1 end
+    if entry.source:match "^iconify/" then counts.iconify = counts.iconify + 1 end
+  end
+
+  table.insert(lines, "Project")
+  table.insert(lines, "  root: " .. root)
+  table.insert(lines, "  package.json: " .. bool_text(file_exists(join(root, "package.json"))))
+  table.insert(lines, "  node_modules: " .. bool_text(dir_exists(join(root, "node_modules"))))
+  table.insert(lines, "")
+  table.insert(lines, "Sources")
+  table.insert(lines, "  total: " .. #entries)
+  table.insert(lines, "  lucide: " .. counts.lucide)
+  table.insert(lines, "  react-icons: " .. counts.react)
+  table.insert(lines, "  iconify: " .. counts.iconify)
+end
+
+local function append_dependency_report(lines)
+  local snacks = rawget(_G, "Snacks")
+  if not snacks then
+    local ok_snacks, snacks_mod = pcall(require, "snacks")
+    if ok_snacks then snacks = snacks_mod end
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, "Executables")
+  table.insert(lines, "  node: " .. executable_text "node")
+  table.insert(lines, "  chafa: " .. executable_text "chafa")
+  table.insert(lines, "  magick: " .. executable_text "magick")
+  table.insert(lines, "  convert: " .. executable_text "convert")
+  table.insert(lines, "")
+  table.insert(lines, "Picker UI")
+  table.insert(lines, "  configured ui: " .. tostring(config.ui))
+  table.insert(lines, "  telescope available: " .. bool_text(pcall(require, "telescope.pickers")))
+  table.insert(lines, "  snacks available: " .. bool_text(snacks and snacks.picker and snacks.picker.pick))
+  table.insert(lines, "  snacks.image available: " .. bool_text(snacks and snacks.image and snacks.image.buf))
+
+  if snacks and snacks.image then
+    local ok_terminal, terminal_supported = pcall(snacks.image.supports_terminal)
+    table.insert(lines, "  snacks image terminal supported: " .. bool_text(ok_terminal and terminal_supported))
+  end
+end
+
+local function append_render_report(lines, root, item)
+  table.insert(lines, "")
+  table.insert(lines, "Preview Render Test")
+  if not item then
+    table.insert(lines, "  item: none")
+    return
+  end
+
+  table.insert(lines, "  item: " .. item.icon .. " [" .. item.source .. "]")
+  table.insert(lines, "  import_path: " .. item.import_path)
+
+  local svg_file = preview_cache_file(item)
+  local png_file = svg_file:gsub("%.svg$", ".png")
+  table.insert(lines, "  cache dir: " .. preview_cache_dir())
+  table.insert(lines, "  svg file: " .. svg_file)
+  table.insert(lines, "  png file: " .. png_file)
+
+  local svg = vim.fn.system(build_svg_command(root, item))
+  table.insert(lines, "  node render exit: " .. vim.v.shell_error)
+
+  if vim.v.shell_error ~= 0 or svg == "" then
+    table.insert(lines, "  node render output:")
+    for _, line in ipairs(vim.split(svg, "\n", { plain = true })) do
+      table.insert(lines, "    " .. line)
+    end
+    return
+  end
+
+  local fd = io.open(svg_file, "w")
+  if fd then
+    fd:write(svg)
+    fd:close()
+  end
+  table.insert(lines, "  svg written: " .. bool_text(file_exists(svg_file)))
+
+  local image_file = preview_image_file(svg_file)
+  table.insert(lines, "  image file used: " .. image_file)
+  table.insert(lines, "  png exists: " .. bool_text(file_exists(png_file)))
+
+  local snacks = rawget(_G, "Snacks")
+  if snacks and snacks.image and snacks.image.supports_file then
+    local ok_file, supported = pcall(snacks.image.supports_file, image_file)
+    table.insert(lines, "  snacks supports image file: " .. bool_text(ok_file and supported))
+  end
+end
+
+function M.debug(opts)
+  opts = opts or {}
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local root = find_project_root(bufnr)
+  local entries = build_entries(root)
+  local item = find_debug_item(entries, opts.icon)
+  local lines = {
+    "icon-picker.nvim debug",
+    "generated: " .. os.date "%Y-%m-%d %H:%M:%S",
+    "",
+  }
+
+  append_source_counts(lines, root, entries)
+  append_dependency_report(lines)
+  append_render_report(lines, root, item)
+
+  vim.cmd "new"
+  local debug_buf = vim.api.nvim_get_current_buf()
+  vim.bo[debug_buf].buftype = "nofile"
+  vim.bo[debug_buf].bufhidden = "wipe"
+  vim.bo[debug_buf].swapfile = false
+  vim.bo[debug_buf].filetype = "text"
+  vim.api.nvim_buf_set_name(debug_buf, "icon-picker-debug")
+  vim.api.nvim_buf_set_lines(debug_buf, 0, -1, false, lines)
 end
 
 function M.setup(opts)

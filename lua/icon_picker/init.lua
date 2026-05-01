@@ -4,6 +4,7 @@ local M = {}
 
 local defaults = {
   command = "IconPicker",
+  debug_command = "IconPickerDebug",
   keymaps = {
     normal = nil,
     insert = nil,
@@ -28,6 +29,10 @@ function M.open(opts)
   picker.open(opts)
 end
 
+function M.debug(opts)
+  picker.debug(opts)
+end
+
 function M.setup(opts)
   local cfg = vim.tbl_deep_extend("force", defaults, opts or {})
 
@@ -38,6 +43,13 @@ function M.setup(opts)
     vim.api.nvim_create_user_command(cfg.command, function(command_opts)
       picker.open(command_opts.args ~= "" and { default_text = command_opts.args } or nil)
     end, { nargs = "?", desc = "Pick Lucide/React Icons" })
+  end
+
+  if cfg.debug_command and cfg.debug_command ~= "" then
+    pcall(vim.api.nvim_del_user_command, cfg.debug_command)
+    vim.api.nvim_create_user_command(cfg.debug_command, function(command_opts)
+      picker.debug(command_opts.args ~= "" and { icon = command_opts.args } or nil)
+    end, { nargs = "?", desc = "Debug icon picker preview" })
   end
 
   if cfg.command and cfg.command ~= "" then

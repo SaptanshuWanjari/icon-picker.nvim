@@ -16,6 +16,7 @@ SETUP ~
 >
   require("icon_picker").setup({
     command = "IconPicker",
+    debug_command = "IconPickerDebug",
     keymaps = {
       normal = "<leader>ii",
       insert = "<C-g>i",
@@ -30,6 +31,10 @@ SETUP ~
 COMMANDS ~
   :IconPicker
       Open picker.
+
+  :IconPickerDebug [icon]
+      Open a scratch debug report for preview issues. Optional icon tests a
+      specific icon render path.
 
 MAPPINGS ~
   Configure through setup(). No default keymaps unless provided.
@@ -53,6 +58,22 @@ PREVIEW ~
 <
   Cache cleanup runs once per Neovim session. Set preview_cache_max_age = 0 to
   disable cleanup.
+
+DEBUGGING ~
+  Run:
+>
+  :IconPickerDebug
+<
+  Or test a specific icon:
+>
+  :IconPickerDebug FcGoogle
+<
+  The report includes source counts, executable checks, picker backend checks,
+  snacks image terminal support, render exit status, and cache file paths.
+  For snacks image issues, also run:
+>
+  :checkhealth snacks
+<
 
 ICONIFY ~
   Iconify support reads installed @iconify-json/{prefix}/icons.json packages
